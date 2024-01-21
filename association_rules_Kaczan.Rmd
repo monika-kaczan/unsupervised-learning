@@ -1,0 +1,273 @@
+---
+title: "Exploring music preferences of young adults using associantion rules"
+author: "Monika Kaczan"
+date: "20/02/2022"
+output: html_document
+---
+<style>
+body {
+text-align: justify}
+</style>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+In 2020 global music industry revenue amounted to over $54 billion [1]. Young adults contribute to a big share of this market, as most of them report that they listen to music every day. Moreover, many of them claim that they cannot be happy without music [2]. This is why understanding and exploring music preferences of young people is an interesting and important issue.
+The main goal of this article is to explore young adults’ music preferences using associations rules.   In particular, the goal was to answer the following research questions:  
+-	What type of young adults like listening to music?  
+-	What are the associations between music genres people like to listen to?  
+-	What are the associations between music genres people do not like to listen to?  
+-	What personality traits make people like listening to Music and what personality traits people who like listening to music tend to have?  
+Apriori algorithm was used to generate association rules. It uses prior knowledge of frequent items and focuses on them.  
+
+
+### Data description
+The data used for this analysis comes from a survey conducted in 2013 by students of the Statistics class at Faculty of Social and Economic Sciences, Comenius University Bratislava. They interviewed 1010 Slovakian teenagers and young adults and asked them set of questions related to, among others, their music preferences, hobby and interests, personality traits and demographics. This dataset is available on Kaggle (https://www.kaggle.com/miroslavsabo/young-people-survey) and to my best knowledge has not yet been analyzed using association rules. 
+
+
+### Analysis
+
+#### What type of young adults like listening to music?
+
+
+```{r include=FALSE}
+
+# Libraries
+library(arules)
+library(arulesViz)
+library(arulesCBA)
+library(dplyr)
+
+# Uploading the data and extracting interesting info 
+df <- read.csv("responses.csv")
+df[df == ""] <- NA
+df_dem <- na.omit(df[, c(1, 141, 145, 147:150)])
+for (i in 1:nrow(df_dem)){
+  if(df_dem$Music[i] >= 4) {df_dem$Music[i] = "like music"}
+  else if (df_dem$Music[i] == 3) {df_dem$Music[i] = "neutral for music"} 
+  else {df_dem$Music[i] = "dislike music"}
+  if(df_dem$Age[i] <= 18) {df_dem$Age[i] = "15-18"}
+  else if (df_dem$Age[i] <= 22) {df_dem$Age[i] = "19-22"} 
+  else if (df_dem$Age[i] <= 26) {df_dem$Age[i] = "23-26"}
+  else {df_dem$Age[i] = "27-30"}
+  if(df_dem$Only.child[i] == "yes") {df_dem$Only.child[i] = "only child"}
+  else {df_dem$Only.child[i] = "have siblings"}
+}
+
+write.csv(df_dem, "df_dem.csv")
+trans_dem <- read.transactions("df_dem.csv", format = "basket", sep = ",")
+
+```
+
+From the preliminary data analysis, we learn that most of respondents are aged 19-22. Most of them have spent most of their childhood in a city, have siblings and have graduated secondary school. 94% of them like listening to music. 
+
+```{r echo=TRUE}
+
+itemFrequency(trans_dem, type="relative")[which(itemFrequency(trans_dem, type="relative") > 0.00103)]
+
+```
+
+We see that young adults who like listening to music are often teenagers aged 15-18, still in primary school and living most of their childhood in a village. 
+
+```{r echo=TRUE}
+
+# What type of young adults like listening to music?
+rules.like.music <- apriori(data=trans_dem, parameter=list(supp=0.01, conf=0.1), appearance=list(default="lhs", rhs="like music"), control=list(verbose=F)) 
+rules.like.music.conf <- sort(rules.like.music, by="confidence", decreasing=TRUE)
+inspect(head(rules.like.music.conf)) 
+
+```
+
+
+
+#### What are the associations between music genres people like to listen to?
+
+```{r include=FALSE}
+#### Genre's likes and dislikes - data transformation ####
+
+df_genre <- na.omit(df[, 3:19])
+df_genre_like <- df_genre
+df_genre_dislike <- df_genre
+df_genre_like[df_genre_like <= 3] <- NA
+df_genre_dislike[df_genre_dislike >= 3] <- NA
+
+
+# Like
+
+for (i in 1:nrow(df_genre_like)){
+  for (j in 1:17){
+    if (is.na(df_genre_like[i, j]) == FALSE) {df_genre_like[i, j] = paste(colnames(df_genre_like)[j])}
+    else {df_genre_like[i, j] = ""}
+  }
+}
+
+write.table(df_genre_like, file = "df_genre_like.csv", col.names = FALSE, row.names = FALSE, sep = ",")
+genre_like <- read.transactions("df_genre_like.csv", sep =",", format("basket"),  rm.duplicates = TRUE)
+
+summary(genre_like)
+
+
+# Dislike
+
+for (i in 1:nrow(df_genre_dislike)){
+  for (j in 1:17){
+    if (is.na(df_genre_dislike[i, j]) == FALSE) {df_genre_dislike[i, j] = paste(colnames(df_genre_dislike)[j])}
+    else {df_genre_dislike[i, j] = ""}
+  }
+}
+
+write.table(df_genre_dislike, file = "df_genre_dislike.csv", col.names = FALSE, row.names = FALSE, sep = ",")
+genre_dislike <- read.transactions("df_genre_dislike.csv", sep =",", format("basket"),  rm.duplicates = TRUE)
+
+summary(genre_dislike)
+
+
+# Generating rules
+genre_like_rules <- apriori(genre_like, parameter = list(support = 0.1, confidence = 0.25, minlen = 2))
+summary(genre_like_rules)
+genre_dislike_rules <- apriori(genre_dislike, parameter = list(support = 0.1, confidence = 0.4, minlen = 2))
+summary(genre_dislike_rules)
+
+```
+
+From the relative frequency plot, we see that most people like Rock and Pop – both of them have relative frequency of over 50%. On the other hand, least liked music genres are Folk and Country. 
+
+```{r echo=TRUE}
+itemFrequencyPlot(genre_like)
+```
+
+There are many interesting rules regarding music genre preferences, for example:  
+- People who like Classical music and Rock and Roll are also likely to likely to like Swing and Jazz – it might be due to all those genres being more popular in past decades.  
+- People who like Classical music also like Opera – which both are rather “conservative” music genres.  
+- Listening to Metal or Hardrock, Punk, Rock and Roll and Alternative makes one more likely to enjoy Rock – which is expected, as all those genres are similar and might overlap.   
+
+```{r message=FALSE}
+
+plot(genre_like_rules)
+plot(genre_like_rules, method="grouped")
+plot(genre_like_rules, method="paracoord", control=list(reorder=TRUE))
+
+inspect(sort(genre_like_rules, by = "lift")[1:5])
+inspect(sort(genre_like_rules, by = "confidence")[1:5])
+inspect(sort(genre_like_rules, by = "count")[1:5])
+inspect(sort(genre_like_rules, by = "support")[1:5])
+
+```
+
+
+I also analyzed what people are most likely to listen to if they enjoy listening to Alternative music. We see that people who like Punk, Rock, Rock and Roll, Swing and Jazz tend to also listen to Alternative music.
+
+```{r echo=FALSE}
+
+par(mfrow=c(1,1))
+
+rules_alternative <- apriori(data=genre_like, parameter=list(supp=0.05,conf = 0.01), 
+                       appearance=list(default="lhs", rhs="Alternative"), control=list(verbose=F)) 
+rules_alternative_conf <- sort(rules_alternative, by="confidence", decreasing=TRUE)
+inspect(head(rules_alternative_conf))
+
+plot(rules_alternative, method="paracoord", control=list(reorder=TRUE))
+
+```
+
+
+
+#### What are the associations between music genres people like to listen to?
+
+From the relative frequency plot, we see that the most dislike music genres are Country and Opera, followed by Folk, Metal or Hardrock and Punk. 
+
+```{r echo=TRUE}
+
+itemFrequencyPlot(genre_dislike)
+
+```
+
+We see for example that:  
+- People who dislike Pop music, also tend to dislike other “dancy” genres such as Dance and Latino.   
+- People who dislike Classical music often also dislike Opera.  
+- People who dislike Opera or Country tend to dislike Folk and vice versa.  
+
+```{r echo=TRUE}
+rules_alternative <- apriori(data=genre_like, parameter=list(supp=0.05,conf = 0.01), 
+                       appearance=list(default="lhs", rhs="Alternative"), control=list(verbose=F)) 
+rules_alternative_conf <- sort(rules_alternative, by="confidence", decreasing=TRUE)
+inspect(head(rules_alternative_conf))
+
+plot(rules_alternative, method="paracoord", control=list(reorder=TRUE))
+
+```
+
+
+#### What personality traits make people like listening to Music and what personality traits people who like listening to music tend to have?
+
+As it was mentioned before, 94% of survey participants like listening to music. Other popular personality traits among respondents were: often keeping promises (Keeping.Promises), turning back borrowed stuff (Hypochondriac) and not being hypochondriac.  
+
+
+```{r include=FALSE}
+
+df_like_music <- na.omit(df[, c(1, 77:132)])
+
+df_like_music[is.na(df_like_music) == TRUE] <- ""
+
+for (i in 1:nrow(df_like_music)){
+  for (j in 1:1){
+    if (df_like_music[i, j] > 3) {df_like_music[i, j] = paste("like", colnames(df_like_music)[j])}
+    else if (df_like_music[i, j] < 3) {df_like_music[i, j] = paste("dislike", colnames(df_like_music)[j])}
+    else {df_like_music[i, j] = ""}
+  }
+  for (j in 2:32){
+    if (df_like_music[i, j] > 3) {df_like_music[i, j] = paste(colnames(df_like_music)[j])}
+    else if (df_like_music[i, j] < 3) {df_like_music[i, j] = paste("not", colnames(df_like_music)[j])}
+    else {df_like_music[i, j] = ""}
+  }
+  for (j in 34:34){
+    df_like_music[i, j] = paste("lying", df_like_music[i, j])
+  }
+  for (j in 35:57){
+    if (df_like_music[i, j] > 3) {df_like_music[i, j] = paste(colnames(df_like_music)[j])}
+    else if (df_like_music[i, j] < 3) {df_like_music[i, j] = paste("not", colnames(df_like_music)[j])}
+    else {df_like_music[i, j] = ""}
+  }
+}
+
+write.table(df_like_music, file = "df_like_music.csv", col.names = FALSE, row.names = FALSE, sep = ",")
+like_music <- read.transactions("df_like_music.csv", sep =",", format("basket"),  rm.duplicates = TRUE)
+summary(like_music)
+
+```
+
+```{r echo=TRUE}
+itemFrequencyPlot(like_music, topN = 10)
+```
+
+We see that people who believe that bad people will suffer one day and good people will be rewarded (Final.Judgment) and people who feel lonely (Loneliness) tend to like listening to music.  
+On the opposite, people who listen to music tend to keep their promises (Keeping.Promises), be not hypochondriac (Hypochondriac) and turn back borrowed stuff (Borrowed.Stuff). This overlaps with most frequent answers, as because all of them appear rather frequently, they have high support and high confidence. 
+
+```{r echo=TRUE}
+rules_like_music_personality <- apriori(data=like_music, parameter=list(supp=0.1,conf = 0.25), 
+                       appearance=list(default="lhs", rhs="like Music"), control=list(verbose=F)) 
+rules_like_music_personality_conf <- sort(rules_like_music_personality, by="confidence", decreasing=TRUE)
+inspect(head(rules_like_music_personality_conf))
+
+
+rules_like_music_personality_rev <- apriori(data=like_music, parameter=list(supp=0.1,conf = 0.25), 
+                                        appearance=list(default="rhs", lhs="like Music"), control=list(verbose=F)) 
+rules_like_music_personality_rev_conf <- sort(rules_like_music_personality_rev, by="confidence", decreasing=TRUE)
+inspect(head(rules_like_music_personality_rev_conf))
+```
+
+
+### Summary
+
+In this article, I used apriori algorithm to find association rules in order to explore music preferences of young adults. Using association rules enabled us to see profiles of young adults who like listening to music, make connections between their liked and disliked genres as well as learn personality traits which drive people to listen to music.  
+
+
+### References 
+
+[1] https://www.globenewswire.com/news-release/2021/09/16/2298162/28124/en/Global-Music-Recording-Market-Report-2021-2030-Featuring-Universal-Music-Group-Sony-Music-and-Warner-Music.html  
+[2] Upadhyay, Dr. Durgesh. (2014). Young Adults, Music and Psychological Well-Being: Exploring the Prospects. 2. 37-43. 
+
+
+

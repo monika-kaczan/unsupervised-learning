@@ -1,0 +1,388 @@
+---
+title: Analysis of the 'Poland A and B' division using clustering and dimension reduction methods
+author: "Monika Kaczan"
+date: "21 / 02 / 2022"
+output: html_document
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+
+### 1. Introduction
+
+In Polish media we often hear a phrase “Poland A and B” (<i>Polska A i B</i>) referring to the political, cultural and economic division between western and eastern side of Poland. Usually the areas on the western side of the Vistula river are considered to be more developed, therefore they are called Poland A. On the other hand, the eastern areas are considered poorer and backward and are called Poland B. However, the exact shape of the border between those two is not commonly agreed as some propose other divisions, such as northern and southern Poland [1], or a division into Poland A, B and C where Poland C would be more developed than Poland B, but still underperforming compared to Poland A [2]. 
+
+Investigating the division into “Poland A and B” is an interesting problem as it highlights internal differences between regions of Poland. It might suggests possible areas for improvement, for example, resources redistribution.  
+
+In this article I would like to examine the division of voivodships into Poland A and Poland B using various clustering and dimension reduction methods. Although voivodship are not entirely internally homogeneous, using them can provide clearer division which is easier to interpret than analyzing for example, powiatys. Additionally, data for voivodships is more accessible.       
+
+Firstly, I will attempt to cluster voivodships without reducing the number of variables taken into account. To do this, I will use hierarchical agglomerative, hierarchical divisive, k-means and k-medoids clustering. Then, I will apply dimension reduction on the dataset using principal component analysis and multidimensional scaling. Finally, I will perform clustering on the dataset with reduced number of variables.  
+  
+
+
+
+### 2.	Data description, preliminary analysis and clusterization method selection
+
+The data used in this this project comes from Bank Danych Lokalnych (Local Data Bank) by Głowny Urząd Statystyczny (Statistics Poland). The data consist of 20 variables for all of 16 voivodships in Poland.  
+
+Variables measure different aspects of social, cultural and economic development. They can be grouped in 3 categories:
+- Social care and health care – 6 variables marked by x in the following order: Doctors for 10k people,	Places in nurseries for 1k children aged 0-3,	No. of people for 1 hospital bed,	Nurses for 10k people,	Percentage of childeren aged 0-3 under institutional care,	No. of beds in hospices and nursing homes for 100k people
+- Economy – 9 variables marked by y in the following order: Average monthly salary in the enterprise sector, Unemployment rate, Monthly salary,	Retail sale of goods per capita,	Production sold in the industry sector per capita,	Number of economic entities per 1k people,	Agriculture production per 1 ha of farming area,	Investments per capita in private and public sector,	Expenditure on innovative activities in enterprises per 1 employed person
+- Culture and education – 6 variables marked by z in the following order: No. of people per 1 cinema seat,	Percentage of children attending primary schools,	Matura exam pass rate,	No. of university graduates,	Percentage of foreign students  
+
+Some variables needed to be transformed in order to represent higher levels of development for higher values.  
+
+For preliminary analysis I generated a boxplot for each variable.  
+
+```{r include=FALSE}
+# Libraries
+library(readxl)
+library(stats)
+library(factoextra)
+library(flexclust)
+library(fpc)
+library(clustertend)
+library(cluster)
+library(ClusterR)
+library(tidyverse)
+library(dendextend)
+library(corrplot)
+library(caret)
+library(smacof)
+
+# Loading data
+df <- read_xlsx("!wszystko.xlsx")
+# Transforming selected to have them on the same scale -> the higher value, the better
+df$z1 <- df$z1*(-1)
+df$x3 <- df$x3*(-1)
+var <- df[, 2:21]
+rownames(var) <- df$woj
+
+# Scaling
+var_scaled <- as.data.frame(lapply(var, scale))
+rownames(var_scaled) <- df$woj
+
+var_scaled_social <- var_scaled[, 1:6]
+var_scaled_economy <- var_scaled[, 7:15]
+var_scaled_education <- var_scaled[, 16:20]
+```
+
+```{r echo=TRUE}
+# Outliers - based on boxplots
+par(mfrow=c(5,4), mar = c(1.5,2,1.5,2))
+for (i in 1:20){
+  boxplot(var[, i])
+}
+par(mfrow=c(1,1))
+```
+
+We see that in most cases, interquartile range is wide and there are some variables which contain significant outliers.  
+
+I also calculated and visualized the Pearson correlation matrix for each variable.  
+
+
+```{r echo=TRUE}
+# Correlation matrix
+corr <- cor(var, method="pearson") 
+# print(corr, digits=2)
+corrplot(corr, order ="alphabet", tl.cex=0.6)
+```
+
+We see that the vast majority of variables are highly positively correlated with each other. It was expected as they all measure development level of particular region, but in different areas. However, two pairs of variables: x2 (places in nurseries for 1k children aged 0-3) and x5 (percentage of children aged 0-3 under institutional care) as well as y1 (average monthly salary in the enterprise sector) and y3 (average monthly salary) are very highly correlated, with the correlation coefficients being 0.959 and 0.978 respectively. This is because those variables are directly related and measuring only a slightly different phenomena. At the same time, there is no reason to say that one variable from the pairs is better than the other in measuring development. Therefore, in the later part of the project, I will conduct dimension reduction and then clustering.  
+
+Some variables, for example x3 and x4 with y4, y5 and y6, are negatively correlated, but only to a limited extend.  
+
+Hopkins statistics for this data is 0.45. It is close to 0.5 which would suggest that data is random. As this is just theroetical approach to the problem of voivodships' clusterization, I decided to nevertheless continue with my analysis.
+
+```{r echo=TRUE}
+hopkins(var_scaled, n=nrow(var_scaled)-1)
+```
+
+One of the main characteristic of the dataset is that the number of observations is very small. Thanks to that, we can effectively implement hierarchical clustering methods: agglomerative and divisive. Hierarchical clustering enables us to better explore characteristics of associations between different voivodships. Apart from hierarchical clustering, I have also conducted k-means and k-medoids clustering. I decided to incorporate both methods as there are some outliers in the dataset, but as was mentioned before the dataset is small. 
+I have chosen k-medoids compared to k-means as the dataset had some outliers which could influence the results. 
+
+
+
+### 3.	Clustering without reducing data dimensions
+
+Firstly, I attempted to cluster the data without reducing dimension of variables i.e. taking all 20 variables into account.  
+
+
+##### 3.1 Hierarchical clustering
+
+Hierarchical clustering seeks to build hierarchy of clusters. There are two types of hierarchical clustering: agglomerative, in which each observation starts with its own cluster and in next steps these clusters are joined together; and divisive, in which all observations start in one cluster which in next steps is broken down until obtaining individual observations.
+
+I began my analysis with agglomerative hierarchical clustering using AGNES algorithm. Using different linkage methods, I obtained the highest agglomerative coefficients for Ward’s and complete linkage methods, 0.59 and 0.61 respectively. As both of them provided very similar results (as shown in the comparison graph), I continued my analysis with complete linkage.
+
+```{r echo=TRUE}
+# Dissimilarity matrix
+d <- dist(var_scaled, method = "euclidean")
+
+# Linkage methods with agglomerative coefficiece from highest to lowest
+# hieragg_single_wdr <- agnes(d, method = "single")
+# coef(hieragg_single_wdr)
+# hieragg_average_wdr <- agnes(d, method = "average")
+# coef(hieragg_average_wdr)
+hieragg_ward_wdr <- agnes(d, method = "ward")
+paste("Agglomerative coefficiece, Ward's method: ", coef(hieragg_ward_wdr))
+hieragg_complete_wdr <- agnes(d, method = "complete")
+paste("Agglomerative coefficiece, complete method: ", coef(hieragg_complete_wdr))
+
+# Complete and ward linkage methods are quite similiar
+dend1 <- as.dendrogram (hieragg_complete_wdr)
+dend2 <- as.dendrogram (hieragg_ward_wdr)
+tanglegram(dend1, dend2)
+```
+
+In case of hierarchical clustering, choice of the number of clusters is more subjective. The elbow method didn’t provide any clear suggestion, however shilouette method suggests 2 clusters. I would say that voivoideships could be splitted into 2, 3 or 4 clusters.  
+
+```{r echo=TRUE}
+fviz_nbclust(var_scaled, FUN = hcut, method = "wss")
+fviz_nbclust(var_scaled, FUN = hcut, method = "silhouette")
+```
+
+We see that Mazowieckie alone stands out from rest of voivodeships. However, the rest of the voivoidships are roughly clustered according to their geography: for example, Dolnośląskie, Łódzkie, Śląskie and Małopolskie forming one of the subclusters all lie in south of Poland, nearby each other. 
+
+```{r echo=TRUE}
+# Dendrogram
+pltree(hieragg_complete_wdr, cex = 0.6, hang = -1, labels = as.vector(t(df[, 1])))
+# pltree(hieragg_ward_wdr, cex = 0.6, hang = -1, labels = as.vector(t(df[, 1])))
+rect.hclust(hieragg_complete_wdr, k = 2, border = 2:5)
+rect.hclust(hieragg_complete_wdr, k = 3, border = 2:5)
+rect.hclust(hieragg_complete_wdr, k = 4, border = 2:5)
+```
+
+Results from divisive hierarchical clustering using DIANA algorithm vary from the agglomerative approach. Here, Dolnośląskie and Mazowieckie stand out from the rest with other voivodships being quite similar. Divisisive coefficient in this case is 0.63.
+
+```{r echo=TRUE}
+hierdiv_wdr <- diana(var_scaled)
+hierdiv_wdr$dc
+# Dendrogram
+pltree(hierdiv_wdr, cex = 0.6, hang = -1, labels = as.vector(t(df[, 1])))
+```
+
+
+##### 3.2 K-means
+
+K-means is a clustering approach which aims to partition observations into clusters in which each observation belongs to the cluster with the nearest mean, serving as a prototype of the cluster.  
+
+In order to run k-means, I needed to determine the optimal number of clusters. To do this, I used elbow, silhouette and AIC criteria.   
+
+```{r echo=TRUE}
+opt <- Optimal_Clusters_KMeans(var_scaled, max_clusters=8, plot_clusters = TRUE)
+opt <- Optimal_Clusters_KMeans(var_scaled, max_clusters=8, plot_clusters=TRUE, criterion="silhouette")
+opt <-Optimal_Clusters_KMeans(var_scaled, max_clusters=8, plot_clusters=TRUE, criterion="AIC")
+```
+
+Based on the plots, we can see that both 2 and 3 clusters seem optimal and are very similar in terms of clustering quality with 3 clusters having only slightly higher AIC. This is why I analyzed both of these options. 
+
+```{r echo=TRUE}
+kmeans2wdr <- kmeans(var_scaled, 2)
+kmeans3wdr <- kmeans(var_scaled, 3)
+
+# Visualization of clusters
+
+fviz_cluster(list(data=var_scaled, cluster=kmeans2wdr$cluster), stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+
+paste("Calinski-Harabasz statistics for 2 clusters: ", round(calinhara(var_scaled, kmeans2wdr$cluster),digits=2) )
+
+groupBWplot(var_scaled, kmeans2wdr$cluster, alpha=0.05) 
+
+fviz_cluster(list(data=var_scaled, cluster=kmeans3wdr$cluster), stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+
+paste("Calinski-Harabasz statistics for 3 clusters: ", round(calinhara(var_scaled, kmeans3wdr$cluster),digits=2)) 
+
+groupBWplot(var_scaled, kmeans3wdr$cluster, alpha=0.05) 
+```
+
+Calinski-Harabasz statistics is higher for two clusters than for three, which suggest that it is a better solution. In both cases geographical division for Poland ‘A’ and ‘B’ is rather non-existent as in the same clusters we have voivodships which are far away such as for example Podlaskie, Opolskie and Lubuskie. However, we see that for 2 clusters, 1st cluster have generally higher quality of life in most categories than 2nd cluster. Similarly, for 3 clusters, cluster 3rd have the highest values for most variables.  
+
+
+
+##### 3.3. K-medoids  
+
+K-medoids approach is similar to k-means, but instead of using means it uses datapoints as centers of clusters.  
+
+Firstly, I determined the optimal number of clusters using elbow and shilouette criteria. Here again both 2 and 3 clusters seemed reasonable, but based on the Calinski-Harabasz statistics 2 is better. I analyzed division into 2 clusters using Partitioning Around Medoids (PAM) algorithm.  
+
+```{r echo=TRUE}
+pam2wrd <- pam(var_scaled, 2) 
+paste("Calinski-Harabasz statistics for 2 clusters: ", round(calinhara(var_scaled, pam2wrd$cluster),digits=2))
+
+pam3wrd <- pam(var_scaled, 3) 
+paste("Calinski-Harabasz statistics for 3 clusters: ", round(calinhara(var_scaled, pam3wrd$cluster),digits=2))
+
+fviz_cluster(pam2wrd, stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+
+groupBWplot(var_scaled, pam2wrd$cluster, alpha=0.05)
+
+```
+
+Similar to agglomerative hierarchical clustering, we see that Mazowieckie stands out from the other voivodships. It obviously have the highest values for most of characteristics. 
+
+
+### 4. Data dimension reduction
+
+As it was previously mentioned, many variables are highly correlated with each other. It suggests that they might carry similar information, so they do not have to be all included in the analysis. Dimension reduction makes interpretation easier and cleaner. Usually, reducing data dimensions also provide other advantages such as less time and space consuming calculations, or smaller probability of overfitting the data, but in this particular case of small dataset containing all voivodships those are neglectable. 
+
+
+##### 4.1 Principal components analysis
+
+In Principal Component Analysis (PCA) we search for directions in space that have the highest variance and project data onto that subspaces.  
+
+As the data I collected was already grouped in three categories, I decided to firstly attempt to run PCA within them to obtain certain indicators of qualities of voivodships in each category.
+
+```{r echo=TRUE}
+pca_social <- prcomp(var_scaled_social, center=FALSE, scale=FALSE)
+summary(pca_social)
+pca_social$rotation
+
+pca_economy <- prcomp(var_scaled_economy, center=FALSE, scale=FALSE)
+summary(pca_economy) 
+pca_economy$rotation
+
+pca_education <- prcomp(var_scaled_education, center=FALSE, scale=FALSE)
+summary(pca_education)
+pca_education$rotation
+```
+
+On the one hand, we obtain relatively easy to interpret indicators of quality of life in those categories. First principal component in each category would serve as general indicator, while the second component might carry some additional meaning. For example, in Social variables x1, x3 and x4 refer to the quality of medical care, while variables x2, x5 and x6 refer to other social care such as places in children clubs or care for the elderly. Therefore, PC2 might be interpreted as as indicator of medical care. In case of Economy, PC2 indicates retail, agriculture and production sales. However, in case of Culture and Education it is hard to interpret PC2. 
+
+On the other hand, we would need at least two principal components in each category to obtain 70% of explained variance in each of them. This is why I also analyzed all variables together. 
+
+```{r echo=TRUE}
+pca <- prcomp(var_scaled, center=FALSE, scale=FALSE)
+summary(pca)
+fviz_eig(pca)
+fviz_pca_var(pca)
+pca$rotation
+df_pca <- pca$x[, 1:6]
+```
+
+Now we can see that we can obtain higher values of explained variance for even lower number of principal components. Unfortunately, these principal components are also harder to interpret. Only the first principal component might roughy correnspond to general quality of life as almost all variables there have positive rotation.  
+
+Based on the scree plot, I would say that six variables would be enough for further analysis. Together they explain over 91% of total variation. However, as they are hard to interpret, I have chosen to proceed the analysis instead with six variables based on the categorical division. 
+
+
+##### 4.2. Multidimensional Scaling
+
+Multidimensional Scaling (MDS) transforms dataset into one with lower number of dimensions while keeping distances representing dissimilarities between points. To perform MDS, we calculate distances between all pairs of observations (in this case using Euclidean metric) and then based on that we calculate new artificial coordinates (in this case in 2D plane) and optimize their values.  
+
+```{r echo=TRUE}
+#cor(t(var_scaled))
+dist <- dist(var_scaled)
+mds1 <- cmdscale(dist, k=2)
+summary(mds1)
+names <- rownames(var_scaled)
+plot(mds1, type = "n")
+text(mds1, labels=names, cex=0.5, adj=0.5)
+```
+
+Based on the MDS vizualization, we see that all voivodships except Mazowieckie are rather grouped together. Wielkopolskie and Lubelskie might be on peripheries of that group. Mazowieckie is far away from the rest of voivodships – the same result was obtained for k-medoids and agglomerative hierarchical clustering. Statistics of both groups Mazowieckie and the rest of voivodhsips were analyzed before and indeed, they are different, which was confirmed by MDS. As MDS coordinates do not carry any business values, I treat it as an additional analysis showing differences between voivodships. 
+
+
+
+### 5. Clustering on dimension reduced data
+
+I have also conducted clustering on dataset with its dimensions reduced using Principal Component Analysis. I have chosen two first principal components for every category (Economy, Social, and Culture and Educations), obtaining 6 variables in total. I have chosen these as they had clear interpretations compared to principal components derived from conducing PCA on all variables at the same time.  
+
+
+##### 5.1. Hierarchical clustering
+
+Firstly, I checked what number of clusters would be optimal - based on shilouette and partially elbow method that would be probably 2.  
+
+I run the agglomerative hierarchical clustering to see the structure of clusters. Indeed, we obtained two clear clusters. This time however, it is hard to relate it to any geographical division of Poland, as we have voivodships lying far away from each other (such as for example Opolskie and Podlaskie) being in the same cluster. Agllomerative coefficient of this clustering is slightly higher than before, 0.64. 
+
+
+```{r echo=TRUE}
+
+df_pca <- cbind(pca_social$x[, 1:2], pca_economy$x[, 1:2], pca_education$x[, 1:2])
+colnames(df_pca) <- c("social1", "social2", "economy1", "economy2", "education1", "education2")
+
+# Dissimilarity matrix
+df_pca_scaled <- scale(df_pca)
+d2 <- dist(df_pca_scaled, method = "euclidean")
+
+fviz_nbclust(df_pca_scaled, FUN = hcut, method = "wss")
+fviz_nbclust(df_pca_scaled, FUN = hcut, method = "silhouette")
+
+# Linkage methods with agglomerative coefficiece from highest to lowest
+hieragg_complete_pca <- agnes(d2, method = "complete")
+
+pltree(hieragg_complete_pca, cex = 0.6, hang = -1, labels = as.vector(t(df[, 1])))
+coef(hieragg_complete_pca)
+```
+
+In terms of divison agglomerative clustering, this time Wielkopolskie stands out from the rest of voivodships and once again, it is hard to point a clear geographical division.
+
+```{r echo=TRUE}
+hierdiv_complete_pca <- diana(d2)
+coef(hierdiv_complete_pca)
+pltree(hierdiv_complete_pca, cex = 0.6, hang = -1, labels = as.vector(t(df[, 1])))
+```
+
+
+
+##### 5.2. K-means
+
+Similarly as with the unprocessed data, it was hard to decide between two or three clusters and therefore I compared both.
+
+```{r echo=TRUE}
+opt <- Optimal_Clusters_KMeans(df_pca_scaled, max_clusters=8, plot_clusters = TRUE)
+opt <- Optimal_Clusters_KMeans(df_pca_scaled, max_clusters=8, plot_clusters=TRUE, criterion="silhouette")
+opt <-Optimal_Clusters_KMeans(df_pca_scaled, max_clusters=8, plot_clusters=TRUE, criterion="AIC")
+```
+
+It is hard draw geographical division around these clusters. However, we see that voivodships in the first cluster have generally higher indicators of life quality. Wielkopolskie stands out as an outlier - possible third cluster
+
+```{r echo=TRUE}
+fviz_cluster(list(data=df_pca_scaled, cluster=kmeans2wdr$cluster), stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+
+groupBWplot(df_pca_scaled, kmeans2wdr$cluster, alpha=0.05) 
+
+fviz_cluster(list(data=df_pca_scaled, cluster=kmeans3wdr$cluster), stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+```
+
+
+##### 5.3. K-medoids
+
+For k-medoids using PAM I went with two and three clusters. For two clusters, we have the same division as in K-means algorithm.
+
+```{r echo=TRUE}
+#opt <- Optimal_Clusters_Medoids(df_pca_scaled, max_clusters=8, plot_clusters=TRUE, 'euclidean', criterion="silhouette")
+pam2wrd <- pam(df_pca_scaled, 2) 
+fviz_cluster(pam2wrd, stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+```
+
+For three clusters, we obtained an interesting division into three clusters with similiar number of elements. However, it it hard to pinpoint clusters that are "better" and "worse" as some have higher statistics in different categories. 
+
+```{r echo=TRUE}
+pam3wrd <- pam(df_pca_scaled, 3) 
+fviz_cluster(pam3wrd, stand=TRUE, ggtheme=theme_classic(), labelsize = 7, ellipse.type="convex")
+
+groupBWplot(df_pca_scaled, pam3wrd$cluster, alpha=0.05) 
+```
+
+### Summary and conclusions
+
+Based on the clustering analysis, it is hard to draw a clear geographical division between Poland's voivodships which would correspond to 'Poland A and B'. Dimension reduction provided a different view on the data. Depending on the algorithm, I obtained different divisions of voivodships. However, the main conclusions remained similar as in the non-processed data.  
+
+In case of raw data without dimension reduction, in most cases we can see that Mazowieckie stands out from the other voivodships. It is probably due to including Warsaw, Poland's capital city which is relatively more developed compared to the rest of the country. After dimension reduction, Wielkopolskie becomes bigger outlier than Mazowieckie, which unfortunately I am not able to explain why. Mazowieckie and Wielkopolskie being outliers is also confirmed by MDS. We see that Mazowieckie is also often grouped with industrialized voivodships such as Śląskie and Dolnośląskie and Małopolskie, which contains second biggest Polish city Kraków.  
+
+As far as the rest of voivodships are concerned, different clustering methods and algorithms propose different divisions. Some regions are clearly better in terms of economical, social and cultural (educational) development, but they wouldn't correspond to typical idea of 'Poland A and B' - division based on west/east or even north/south geography.  
+
+One have to take into account that this analysis also have its limitations. As it was mentioned before, voivodships are not entirely homogeneous, so as in the case of for example Mazowieckie and Warsaw, certain cities withing a region might be much more developed than the rest. Moreover, variables chosen for this analysis and their categorical assignment was subjective which could also influence the outcomes. 
+
+
+
+### References
+
+[1] https://www.gazetaprawna.pl/wiadomosci/artykuly/1071168,wojewodztwa-polnocne-podzial-na-wschod-i-zachod-polski.html  
+[2] https://gospodarka.dziennik.pl/news/artykuly/484389,nie-tylko-polska-a-i-polska-b-sciana-zachodnia-to-polska-c.html
